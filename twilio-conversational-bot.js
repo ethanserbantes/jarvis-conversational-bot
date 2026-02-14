@@ -1,44 +1,55 @@
 const express = require('express');
 const bodyParser = require('body-parser');
-const OpenAI = require('openai');
 const twilio = require('twilio');
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 
-// Initialize clients
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+// Logging
+const log = (msg) => {
+  console.log(`[${new Date().toISOString()}] ${msg}`);
+};
+
+// Initialize OpenAI client
+let openai;
+try {
+  const OpenAI = require('openai');
+  openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY
+  });
+  log('✅ OpenAI client initialized');
+} catch (err) {
+  log(`❌ OpenAI init error: ${err.message}`);
+}
 
 // Store conversation context
 const conversationState = {};
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok' });
+  res.json({ status: 'ok', openai: !!openai });
 });
 
 // Start call - greeting
 app.post('/voice/start', (req, res) => {
+  const callSid = req.body?.CallSid || 'unknown';
+  log(`START_CALL: ${callSid}`);
+
   try {
     const twiml = new twilio.twiml.VoiceResponse();
-    const callSid = req.body.CallSid;
-    
-    console.log(`[${callSid}] Call started`);
     
     // Initialize conversation
     conversationState[callSid] = [
       {
         role: 'system',
-        content: 'You are Jarvis, a friendly AI assistant. You are having a natural conversation. Keep responses very concise (1 sentence max). Be warm and conversational. If user says "goodbye" or "bye", end the call.'
+        content: 'You are Jarvis, a friendly AI. Keep responses very short (1 sentence). Be conversational.'
       }
     ];
 
-    // Simple greeting
-    twiml.say('Hi! This is Jarvis. How are you today?');
+    // Greeting
+    twiml.say('Hi! This is Jarvis. How are you?');
     
-    // Gather speech input
+    // Gather speech
     twiml.gather({
       input: 'speech',
       timeout: 8,
@@ -47,12 +58,13 @@ app.post('/voice/start', (req, res) => {
       method: 'POST'
     });
 
+    log(`START_CALL: Sending TwiML`);
     res.type('text/xml');
     res.send(twiml.toString());
   } catch (err) {
-    console.error('Error in /voice/start:', err.message);
+    log(`START_CALL ERROR: ${err.message}`);
     const twiml = new twilio.twiml.VoiceResponse();
-    twiml.say('Sorry, an error occurred.');
+    twiml.say('Error occurred.');
     twiml.hangup();
     res.type('text/xml');
     res.send(twiml.toString());
@@ -61,16 +73,18 @@ app.post('/voice/start', (req, res) => {
 
 // Process speech and respond
 app.post('/voice/respond', async (req, res) => {
+  const callSid = req.body?.CallSid || 'unknown';
+  const userInput = req.body?.SpeechResult || '';
+  
+  log(`RESPOND: ${callSid} | User said: "${userInput}"`);
+
   try {
     const twiml = new twilio.twiml.VoiceResponse();
-    const callSid = req.body.CallSid;
-    const userInput = req.body.SpeechResult;
 
-    console.log(`[${callSid}] User: ${userInput}`);
-
-    // Check if user wants to end call
-    if (!userInput || userInput.toLowerCase().includes('bye') || userInput.toLowerCase().includes('goodbye')) {
-      twiml.say('Thanks for chatting! Goodbye!');
+    // Check for goodbye
+    if (!userInput || userInput.toLowerCase().includes('bye')) {
+      log(`RESPOND: Ending call`);
+      twiml.say('Thanks! Goodbye!');
       twiml.hangup();
       res.type('text/xml');
       res.send(twiml.toString());
@@ -83,16 +97,21 @@ app.post('/voice/respond', async (req, res) => {
       content: userInput
     });
 
+    log(`RESPOND: Calling OpenAI`);
+    
     // Get AI response
+    if (!openai) {
+      throw new Error('OpenAI client not initialized');
+    }
+
     const completion = await openai.chat.completions.create({
       model: 'gpt-3.5-turbo',
       messages: conversationState[callSid],
-      max_tokens: 50,
-      temperature: 0.7
+      max_tokens: 50
     });
 
     const aiResponse = completion.choices[0].message.content.trim();
-    console.log(`[${callSid}] Jarvis: ${aiResponse}`);
+    log(`RESPOND: AI response: "${aiResponse}"`);
 
     // Add to history
     conversationState[callSid].push({
@@ -115,9 +134,9 @@ app.post('/voice/respond', async (req, res) => {
     res.type('text/xml');
     res.send(twiml.toString());
   } catch (err) {
-    console.error(`Error in /voice/respond:`, err.message);
+    log(`RESPOND ERROR: ${err.message} | Stack: ${err.stack}`);
     const twiml = new twilio.twiml.VoiceResponse();
-    twiml.say('Sorry, something went wrong. Thanks for calling!');
+    twiml.say('Sorry, error occurred.');
     twiml.hangup();
     res.type('text/xml');
     res.send(twiml.toString());
@@ -126,5 +145,5 @@ app.post('/voice/respond', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`✅ Jarvis bot running on port ${PORT}`);
+  log(`Jarvis bot listening on port ${PORT}`);
 });
