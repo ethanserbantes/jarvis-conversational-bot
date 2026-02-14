@@ -143,7 +143,7 @@ app.post('/voice/respond', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || process.env.RAILWAY_PORT || 3000;
 app.listen(PORT, () => {
   log(`Jarvis bot listening on port ${PORT}`);
 });
