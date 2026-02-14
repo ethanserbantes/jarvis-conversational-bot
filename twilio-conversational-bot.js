@@ -6,41 +6,42 @@ const twilio = require('twilio');
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 
+// Initialize clients
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-const twilioClient = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
-
-// Store conversation context per call
+// Store conversation context
 const conversationState = {};
 
-// Start the call
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
+// Start call - greeting
 app.post('/voice/start', (req, res) => {
   try {
     const twiml = new twilio.twiml.VoiceResponse();
     const callSid = req.body.CallSid;
     
-    console.log('Call started:', callSid);
+    console.log(`[${callSid}] Call started`);
     
-    // Initialize conversation history for this call
+    // Initialize conversation
     conversationState[callSid] = [
       {
         role: 'system',
-        content: 'You are Jarvis, a friendly AI assistant. You are having a natural conversation with someone. Start by introducing yourself briefly and ask how their day is going. Keep responses concise (1-2 sentences). Be warm and conversational.'
+        content: 'You are Jarvis, a friendly AI assistant. You are having a natural conversation. Keep responses very concise (1 sentence max). Be warm and conversational. If user says "goodbye" or "bye", end the call.'
       }
     ];
 
-    // Greeting - using simpler say format
-    twiml.say("Hi there! This is Jarvis, your AI assistant. How's your day going so far?");
-
-    // Gather user input
+    // Simple greeting
+    twiml.say('Hi! This is Jarvis. How are you today?');
+    
+    // Gather speech input
     twiml.gather({
       input: 'speech',
-      timeout: 10,
+      timeout: 8,
       speechTimeout: 'auto',
       action: '/voice/respond',
       method: 'POST'
@@ -49,93 +50,81 @@ app.post('/voice/start', (req, res) => {
     res.type('text/xml');
     res.send(twiml.toString());
   } catch (err) {
-    console.error('Error in /voice/start:', err);
-    res.status(500).send('Error');
-  }
-});
-
-// Process user input and generate response
-app.post('/voice/respond', async (req, res) => {
-  const twiml = new twilio.twiml.VoiceResponse();
-  const callSid = req.body.CallSid;
-  const userInput = req.body.SpeechResult;
-
-  console.log(`[${callSid}] User said: ${userInput}`);
-
-  if (!userInput) {
-    twiml.say(
-      { voice: 'Polly', pollyVoiceId: 'Joanna' },
-      "I didn't catch that. Could you repeat?"
-    );
-    
-    const gather = twiml.gather({
-      input: 'speech',
-      timeout: 30,
-      speechTimeout: 'auto',
-      action: '/voice/respond',
-      method: 'POST'
-    });
-
-    res.type('text/xml');
-    res.send(twiml.toString());
-    return;
-  }
-
-  try {
-    // Add user message to conversation
-    conversationState[callSid].push({
-      role: 'user',
-      content: userInput
-    });
-
-    // Get AI response from OpenAI
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: conversationState[callSid],
-      max_tokens: 100
-    });
-
-    const aiResponse = completion.choices[0].message.content;
-    console.log(`[${callSid}] Jarvis says: ${aiResponse}`);
-
-    // Add AI response to conversation history
-    conversationState[callSid].push({
-      role: 'assistant',
-      content: aiResponse
-    });
-
-    // Say the response
-    twiml.say(
-      { voice: 'Polly', pollyVoiceId: 'Joanna' },
-      aiResponse
-    );
-
-    // Ask for next input
-    const gather = twiml.gather({
-      input: 'speech',
-      timeout: 30,
-      speechTimeout: 'auto',
-      action: '/voice/respond',
-      method: 'POST'
-    });
-
-    res.type('text/xml');
-    res.send(twiml.toString());
-  } catch (error) {
-    console.error('Error:', error.message);
-    twiml.say('Sorry, I encountered an error. Thank you for calling!');
+    console.error('Error in /voice/start:', err.message);
+    const twiml = new twilio.twiml.VoiceResponse();
+    twiml.say('Sorry, an error occurred.');
     twiml.hangup();
     res.type('text/xml');
     res.send(twiml.toString());
   }
 });
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok' });
+// Process speech and respond
+app.post('/voice/respond', async (req, res) => {
+  try {
+    const twiml = new twilio.twiml.VoiceResponse();
+    const callSid = req.body.CallSid;
+    const userInput = req.body.SpeechResult;
+
+    console.log(`[${callSid}] User: ${userInput}`);
+
+    // Check if user wants to end call
+    if (!userInput || userInput.toLowerCase().includes('bye') || userInput.toLowerCase().includes('goodbye')) {
+      twiml.say('Thanks for chatting! Goodbye!');
+      twiml.hangup();
+      res.type('text/xml');
+      res.send(twiml.toString());
+      return;
+    }
+
+    // Add user message
+    conversationState[callSid].push({
+      role: 'user',
+      content: userInput
+    });
+
+    // Get AI response
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: conversationState[callSid],
+      max_tokens: 50,
+      temperature: 0.7
+    });
+
+    const aiResponse = completion.choices[0].message.content.trim();
+    console.log(`[${callSid}] Jarvis: ${aiResponse}`);
+
+    // Add to history
+    conversationState[callSid].push({
+      role: 'assistant',
+      content: aiResponse
+    });
+
+    // Say response
+    twiml.say(aiResponse);
+
+    // Listen again
+    twiml.gather({
+      input: 'speech',
+      timeout: 8,
+      speechTimeout: 'auto',
+      action: '/voice/respond',
+      method: 'POST'
+    });
+
+    res.type('text/xml');
+    res.send(twiml.toString());
+  } catch (err) {
+    console.error(`Error in /voice/respond:`, err.message);
+    const twiml = new twilio.twiml.VoiceResponse();
+    twiml.say('Sorry, something went wrong. Thanks for calling!');
+    twiml.hangup();
+    res.type('text/xml');
+    res.send(twiml.toString());
+  }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`✅ Conversational bot running on port ${PORT}`);
+  console.log(`✅ Jarvis bot running on port ${PORT}`);
 });
