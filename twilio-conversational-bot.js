@@ -47,7 +47,8 @@ app.post('/voice/start', async (req, res) => {
     ];
 
     // Greeting - using Polly male voice
-    twiml.say({ voice: 'man' }, 'Hi! This is Jarvis. How are you?');
+    const greeting = twiml.say('Hi! This is Jarvis. How are you?');
+    greeting.attr('voice', 'man');
     
     // Gather speech
     twiml.gather({
@@ -64,7 +65,8 @@ app.post('/voice/start', async (req, res) => {
   } catch (err) {
     log(`START_CALL ERROR: ${err.message}`);
     const twiml = new twilio.twiml.VoiceResponse();
-    twiml.say('Error occurred.');
+    const error = twiml.say('Error occurred.');
+    error.attr('voice', 'man');
     twiml.hangup();
     res.type('text/xml');
     res.send(twiml.toString());
@@ -84,7 +86,8 @@ app.post('/voice/respond', async (req, res) => {
     // Check for goodbye
     if (!userInput || userInput.toLowerCase().includes('bye')) {
       log(`RESPOND: Ending call`);
-      twiml.say({ voice: 'man' }, 'Thanks! Goodbye!');
+      const goodbye = twiml.say('Thanks! Goodbye!');
+      goodbye.attr('voice', 'man');
       twiml.hangup();
       res.type('text/xml');
       res.send(twiml.toString());
@@ -119,7 +122,8 @@ app.post('/voice/respond', async (req, res) => {
     });
 
     // Say response - male voice
-    twiml.say({ voice: 'man' }, aiResponse);
+    const response = twiml.say(aiResponse);
+    response.attr('voice', 'man');
 
     // Listen again
     twiml.gather({
@@ -135,7 +139,8 @@ app.post('/voice/respond', async (req, res) => {
   } catch (err) {
     log(`RESPOND ERROR: ${err.message}`);
     const twiml = new twilio.twiml.VoiceResponse();
-    twiml.say({ voice: 'man' }, 'Sorry, error occurred.');
+    const error = twiml.say('Sorry, error occurred.');
+    error.attr('voice', 'man');
     twiml.hangup();
     res.type('text/xml');
     res.send(twiml.toString());
