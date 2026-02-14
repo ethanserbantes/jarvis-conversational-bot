@@ -1,0 +1,18 @@
+{
+  "name": "jarvis-conversational-bot",
+  "version": "1.0.0",
+  "description": "Conversational AI phone bot with Twilio",
+  "main": "twilio-conversational-bot.js",
+  "scripts": {
+    "start": "node twilio-conversational-bot.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "body-parser": "^1.20.2",
+    "openai": "^4.24.1",
+    "twilio": "^4.7.0"
+  },
+  "engines": {
+    "node": "22"
+  }
+}
