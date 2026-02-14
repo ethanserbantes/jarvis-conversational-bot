@@ -1,6 +1,7 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const twilio = require('twilio');
+const https = require('https');
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
@@ -22,16 +23,59 @@ try {
   log(`❌ OpenAI init error: ${err.message}`);
 }
 
+const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
+
 // Store conversation context
 const conversationState = {};
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', openai: !!openai });
+  res.json({ status: 'ok', openai: !!openai, elevenlabs: !!ELEVENLABS_API_KEY });
 });
 
+// Helper: Generate speech with ElevenLabs
+async function generateSpeech(text) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify({
+      text,
+      voice_settings: {
+        stability: 0.5,
+        similarity_boost: 0.75
+      }
+    });
+
+    const options = {
+      hostname: 'api.elevenlabs.io',
+      path: '/v1/text-to-speech/pNInz6obpgDQGcFmaJgB', // Adam voice
+      method: 'POST',
+      headers: {
+        'xi-api-key': ELEVENLABS_API_KEY,
+        'Content-Type': 'application/json',
+        'Content-Length': data.length
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      let audioData = '';
+      res.setEncoding('binary');
+      res.on('data', (chunk) => { audioData += chunk; });
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          resolve(Buffer.from(audioData, 'binary'));
+        } else {
+          reject(new Error(`HTTP ${res.statusCode}`));
+        }
+      });
+    });
+
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
+}
+
 // Start call - greeting
-app.post('/voice/start', (req, res) => {
+app.post('/voice/start', async (req, res) => {
   const callSid = req.body?.CallSid || 'unknown';
   log(`START_CALL: ${callSid}`);
 
@@ -42,12 +86,12 @@ app.post('/voice/start', (req, res) => {
     conversationState[callSid] = [
       {
         role: 'system',
-        content: 'You are Jarvis, a friendly AI. Keep responses very short (1 sentence). Be conversational.'
+        content: 'You are Jarvis, a friendly AI. Keep responses very short (1 sentence). Be conversational and warm.'
       }
     ];
 
-    // Greeting
-    twiml.say('Hi! This is Jarvis. How are you?');
+    // Use simple Polly for greeting (ElevenLabs is slower)
+    twiml.say({ voice: 'alice' }, 'Hi! This is Jarvis. How are you?');
     
     // Gather speech
     twiml.gather({
@@ -76,7 +120,7 @@ app.post('/voice/respond', async (req, res) => {
   const callSid = req.body?.CallSid || 'unknown';
   const userInput = req.body?.SpeechResult || '';
   
-  log(`RESPOND: ${callSid} | User said: "${userInput}"`);
+  log(`RESPOND: ${callSid} | User: "${userInput}"`);
 
   try {
     const twiml = new twilio.twiml.VoiceResponse();
@@ -99,7 +143,6 @@ app.post('/voice/respond', async (req, res) => {
 
     log(`RESPOND: Calling OpenAI`);
     
-    // Get AI response
     if (!openai) {
       throw new Error('OpenAI client not initialized');
     }
@@ -119,8 +162,8 @@ app.post('/voice/respond', async (req, res) => {
       content: aiResponse
     });
 
-    // Say response
-    twiml.say(aiResponse);
+    // Use Polly for responses (faster)
+    twiml.say({ voice: 'alice' }, aiResponse);
 
     // Listen again
     twiml.gather({
@@ -134,7 +177,7 @@ app.post('/voice/respond', async (req, res) => {
     res.type('text/xml');
     res.send(twiml.toString());
   } catch (err) {
-    log(`RESPOND ERROR: ${err.message} | Stack: ${err.stack}`);
+    log(`RESPOND ERROR: ${err.message}`);
     const twiml = new twilio.twiml.VoiceResponse();
     twiml.say('Sorry, error occurred.');
     twiml.hangup();
@@ -143,7 +186,7 @@ app.post('/voice/respond', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || process.env.RAILWAY_PORT || 3000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   log(`Jarvis bot listening on port ${PORT}`);
 });
