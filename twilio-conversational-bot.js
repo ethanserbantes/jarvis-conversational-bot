@@ -2,6 +2,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const twilio = require('twilio');
 const https = require('https');
+const crypto = require('crypto');
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
@@ -24,8 +25,10 @@ try {
 }
 
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
+const ELEVENLABS_VOICE_ID = 'pNInz6obpgDQGcFmaJgB'; // Adam - natural male voice
 
-// Store conversation context
+// Store audio cache and conversation context
+const audioCache = {};
 const conversationState = {};
 
 // Health check
@@ -33,7 +36,18 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', openai: !!openai, elevenlabs: !!ELEVENLABS_API_KEY });
 });
 
-// Helper: Generate speech with ElevenLabs
+// Serve cached audio
+app.get('/audio/:id', (req, res) => {
+  const audioId = req.params.id;
+  if (audioCache[audioId]) {
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.send(audioCache[audioId]);
+  } else {
+    res.status(404).send('Not found');
+  }
+});
+
+// Generate speech with ElevenLabs
 async function generateSpeech(text) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify({
@@ -46,7 +60,7 @@ async function generateSpeech(text) {
 
     const options = {
       hostname: 'api.elevenlabs.io',
-      path: '/v1/text-to-speech/pNInz6obpgDQGcFmaJgB', // Adam voice
+      path: `/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`,
       method: 'POST',
       headers: {
         'xi-api-key': ELEVENLABS_API_KEY,
@@ -74,10 +88,18 @@ async function generateSpeech(text) {
   });
 }
 
+// Get current domain (Railway URL or localhost)
+function getCurrentDomain(req) {
+  const host = req.get('host');
+  const protocol = req.protocol;
+  return `${protocol}://${host}`;
+}
+
 // Start call - greeting
 app.post('/voice/start', async (req, res) => {
   const callSid = req.body?.CallSid || 'unknown';
-  log(`START_CALL: ${callSid}`);
+  const domain = getCurrentDomain(req);
+  log(`START_CALL: ${callSid} | Domain: ${domain}`);
 
   try {
     const twiml = new twilio.twiml.VoiceResponse();
@@ -90,8 +112,18 @@ app.post('/voice/start', async (req, res) => {
       }
     ];
 
-    // Use simple Polly for greeting (ElevenLabs is slower)
-    twiml.say({ voice: 'alice' }, 'Hi! This is Jarvis. How are you?');
+    // Generate greeting with ElevenLabs
+    const greetingText = 'Hi! This is Jarvis. How are you?';
+    log(`START_CALL: Generating speech for: "${greetingText}"`);
+    
+    const audioBuffer = await generateSpeech(greetingText);
+    const audioId = crypto.randomBytes(8).toString('hex');
+    audioCache[audioId] = audioBuffer;
+    
+    const audioUrl = `${domain}/audio/${audioId}`;
+    log(`START_CALL: Audio URL: ${audioUrl}`);
+    
+    twiml.play(audioUrl);
     
     // Gather speech
     twiml.gather({
@@ -102,7 +134,6 @@ app.post('/voice/start', async (req, res) => {
       method: 'POST'
     });
 
-    log(`START_CALL: Sending TwiML`);
     res.type('text/xml');
     res.send(twiml.toString());
   } catch (err) {
@@ -119,6 +150,7 @@ app.post('/voice/start', async (req, res) => {
 app.post('/voice/respond', async (req, res) => {
   const callSid = req.body?.CallSid || 'unknown';
   const userInput = req.body?.SpeechResult || '';
+  const domain = getCurrentDomain(req);
   
   log(`RESPOND: ${callSid} | User: "${userInput}"`);
 
@@ -128,7 +160,11 @@ app.post('/voice/respond', async (req, res) => {
     // Check for goodbye
     if (!userInput || userInput.toLowerCase().includes('bye')) {
       log(`RESPOND: Ending call`);
-      twiml.say('Thanks! Goodbye!');
+      const audioBuffer = await generateSpeech('Thanks! Goodbye!');
+      const audioId = crypto.randomBytes(8).toString('hex');
+      audioCache[audioId] = audioBuffer;
+      const audioUrl = `${domain}/audio/${audioId}`;
+      twiml.play(audioUrl);
       twiml.hangup();
       res.type('text/xml');
       res.send(twiml.toString());
@@ -162,8 +198,16 @@ app.post('/voice/respond', async (req, res) => {
       content: aiResponse
     });
 
-    // Use Polly for responses (faster)
-    twiml.say({ voice: 'alice' }, aiResponse);
+    // Generate speech with ElevenLabs
+    log(`RESPOND: Generating speech for: "${aiResponse}"`);
+    const audioBuffer = await generateSpeech(aiResponse);
+    const audioId = crypto.randomBytes(8).toString('hex');
+    audioCache[audioId] = audioBuffer;
+    
+    const audioUrl = `${domain}/audio/${audioId}`;
+    log(`RESPOND: Audio URL: ${audioUrl}`);
+    
+    twiml.play(audioUrl);
 
     // Listen again
     twiml.gather({
