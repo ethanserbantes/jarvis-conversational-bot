@@ -20,35 +20,38 @@ const conversationState = {};
 
 // Start the call
 app.post('/voice/start', (req, res) => {
-  const twiml = new twilio.twiml.VoiceResponse();
-  const callSid = req.body.CallSid;
-  
-  // Initialize conversation history for this call
-  conversationState[callSid] = [
-    {
-      role: 'system',
-      content: 'You are Jarvis, a friendly AI assistant. You are having a natural conversation with someone. Start by introducing yourself briefly and ask how their day is going. Keep responses concise (1-2 sentences). Be warm and conversational.'
-    }
-  ];
+  try {
+    const twiml = new twilio.twiml.VoiceResponse();
+    const callSid = req.body.CallSid;
+    
+    console.log('Call started:', callSid);
+    
+    // Initialize conversation history for this call
+    conversationState[callSid] = [
+      {
+        role: 'system',
+        content: 'You are Jarvis, a friendly AI assistant. You are having a natural conversation with someone. Start by introducing yourself briefly and ask how their day is going. Keep responses concise (1-2 sentences). Be warm and conversational.'
+      }
+    ];
 
-  // Greeting
-  twiml.say(
-    { voice: 'Polly', language: 'en-US', pollyVoiceId: 'Joanna' },
-    "Hi there! This is Jarvis, your AI assistant. How's your day going so far?"
-  );
+    // Greeting - using simpler say format
+    twiml.say("Hi there! This is Jarvis, your AI assistant. How's your day going so far?");
 
-  // Gather user input (30 second timeout, auto-transcribe)
-  const gather = twiml.gather({
-    input: 'speech',
-    timeout: 30,
-    speechTimeout: 'auto',
-    action: '/voice/respond',
-    method: 'POST',
-    language: 'en-US'
-  });
+    // Gather user input
+    twiml.gather({
+      input: 'speech',
+      timeout: 10,
+      speechTimeout: 'auto',
+      action: '/voice/respond',
+      method: 'POST'
+    });
 
-  res.type('text/xml');
-  res.send(twiml.toString());
+    res.type('text/xml');
+    res.send(twiml.toString());
+  } catch (err) {
+    console.error('Error in /voice/start:', err);
+    res.status(500).send('Error');
+  }
 });
 
 // Process user input and generate response
