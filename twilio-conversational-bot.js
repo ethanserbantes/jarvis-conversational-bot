@@ -18,6 +18,7 @@ try {
     apiKey: process.env.OPENAI_API_KEY
   });
   log('✅ OpenAI client initialized');
+  log(`✅ API Key present: ${!!process.env.OPENAI_API_KEY}`);
 } catch (err) {
   log(`❌ OpenAI init error: ${err.message}`);
 }
@@ -46,7 +47,7 @@ app.post('/voice/start', async (req, res) => {
       }
     ];
 
-    // Greeting - using Polly male voice
+    // Greeting
     const greeting = twiml.say('Hi! This is Jarvis. How are you?');
     greeting.attr('voice', 'man');
     
@@ -63,7 +64,7 @@ app.post('/voice/start', async (req, res) => {
     res.type('text/xml');
     res.send(twiml.toString());
   } catch (err) {
-    log(`START_CALL ERROR: ${err.message}`);
+    log(`START_CALL ERROR: ${err.message} | ${err.stack}`);
     const twiml = new twilio.twiml.VoiceResponse();
     const error = twiml.say('Error occurred.');
     error.attr('voice', 'man');
@@ -100,12 +101,15 @@ app.post('/voice/respond', async (req, res) => {
       content: userInput
     });
 
-    log(`RESPOND: Calling OpenAI`);
+    log(`RESPOND: Conversation has ${conversationState[callSid].length} messages`);
+    log(`RESPOND: OpenAI ready: ${!!openai}`);
     
     if (!openai) {
-      throw new Error('OpenAI client not initialized');
+      throw new Error('OpenAI not initialized');
     }
 
+    log(`RESPOND: Calling OpenAI...`);
+    
     const completion = await openai.chat.completions.create({
       model: 'gpt-3.5-turbo',
       messages: conversationState[callSid],
@@ -113,7 +117,7 @@ app.post('/voice/respond', async (req, res) => {
     });
 
     const aiResponse = completion.choices[0].message.content.trim();
-    log(`RESPOND: AI response: "${aiResponse}"`);
+    log(`RESPOND: Got response: "${aiResponse}"`);
 
     // Add to history
     conversationState[callSid].push({
@@ -121,7 +125,7 @@ app.post('/voice/respond', async (req, res) => {
       content: aiResponse
     });
 
-    // Say response - male voice
+    // Say response
     const response = twiml.say(aiResponse);
     response.attr('voice', 'man');
 
@@ -137,7 +141,7 @@ app.post('/voice/respond', async (req, res) => {
     res.type('text/xml');
     res.send(twiml.toString());
   } catch (err) {
-    log(`RESPOND ERROR: ${err.message}`);
+    log(`RESPOND ERROR: ${err.message} | Stack: ${err.stack}`);
     const twiml = new twilio.twiml.VoiceResponse();
     const error = twiml.say('Sorry, error occurred.');
     error.attr('voice', 'man');
